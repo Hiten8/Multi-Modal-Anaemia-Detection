@@ -1,73 +1,201 @@
 """
-train_logistic_regression.py
------------------------------
-Simple, interpretable baseline for the Hb/CBC tabular branch:
-Logistic Regression.
+Clinical/Tabular branch using Logistic Regression.
 
-Why Logistic Regression as the "other simple algorithm":
-- It's linear and interpretable -> coefficients directly show which
-  blood indices push the prediction toward "anemia", which is useful
-  when you write the paper's baseline-comparison section.
-- It's a natural sanity-check baseline: if XGBoost doesn't clearly
-  outperform it, that itself is a reportable (and defensible) finding.
-- It trains in milliseconds, so it costs nothing to include as a
-  reference point in the fusion-strategy comparison table.
+Input:
+    Sexo
+    Edad
+    Frecuencia Cardiaca
+    Hemoglobina
+    Oxígeno
+    Peso
+    Talla
 
-Usage:
-    python src/train_logistic_regression.py
+Output:
+    Anemia probability
+    Predicted class
+    Reliability score
 """
 
 import os
 import joblib
+
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
-from utils import load_dataset, split_features_target, make_train_test_split, evaluate_model
+from utils import (
+    load_dataset,
+    prepare_features,
+    make_train_test_split,
+    evaluate_model,
+    NUMERIC_CLINICAL_COLUMNS,
+    calculate_reliability,
+)
 
-# ---- Paths -----------------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH = os.path.join(BASE_DIR, "data", "metadata.csv")
-MODEL_DIR = os.path.join(BASE_DIR, "outputs", "models")
-RESULTS_DIR = os.path.join(BASE_DIR, "outputs", "results")
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
 
+DATA_PATH = os.path.join(
+    BASE_DIR,
+    "data",
+    "metadata.csv",
+)
+
+MODEL_DIR = os.path.join(
+    BASE_DIR,
+    "outputs",
+    "models",
+)
+
+RESULTS_DIR = os.path.join(
+    BASE_DIR,
+    "outputs",
+    "results",
+)
 
 def main():
-    # 1. Load data
+
+    # 1. Load dataset
     df = load_dataset(DATA_PATH)
-    X, y = split_features_target(df)
 
-    # 2. Train/test split (same seed/ratio as the XGBoost script -> fair comparison)
-    X_train, X_test, y_train, y_test = make_train_test_split(X, y, test_size=0.2)
+    # 2. Calculate reliability BEFORE imputation
+    df["Reliability"] = calculate_reliability(df)
 
-    # 3. Logistic Regression needs scaled features (unlike tree models),
-    # so we wrap scaling + the classifier in a single Pipeline. This keeps
-    # the scaler "attached" to the model when saved, so you can't
-    # accidentally apply it to unscaled data at inference time.
+    print("\nReliability statistics:")
+    print(df["Reliability"].describe())
+
+    # 3. Prepare features and target
+    X, y = prepare_features(df)
+
+    # 4. Train/test split
+    X_train, X_test, y_train, y_test = make_train_test_split(
+        X,
+        y,
+        test_size=0.20,
+    )
+
+    # 5. Logistic Regression pipeline
+    numeric_features = X.columns.tolist()
+
+    preprocessing = ColumnTransformer(
+        transformers=[
+            (
+                "numeric",
+                Pipeline([
+                    (
+                        "imputer",
+                        SimpleImputer(strategy="median"),
+                    ),
+                    (
+                        "scaler",
+                        StandardScaler(),
+                    ),
+                ]),
+                numeric_features,
+            )
+        ]
+    )
+
     model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(max_iter=1000, random_state=42)),
+        (
+            "preprocessing",
+            preprocessing,
+        ),
+        (
+            "classifier",
+            LogisticRegression(
+                max_iter=1000,
+                random_state=42,
+            ),
+        ),
     ])
 
-    # 4. Train
-    print("Training Logistic Regression classifier...")
-    model.fit(X_train, y_train)
+    # 6. Train
+    print("\nTraining Logistic Regression...")
 
-    # 5. Evaluate
-    evaluate_model(model, X_test, y_test, model_name="logistic_regression", results_dir=RESULTS_DIR)
+    model.fit(
+        X_train,
+        y_train,
+    )
 
-    # 6. Coefficients (interpretability -> useful for the paper's discussion)
-    coefs = model.named_steps["clf"].coef_[0]
-    print("\nStandardized coefficients (positive = pushes toward 'Anemia'):")
-    for feat, coef in sorted(zip(X.columns, coefs), key=lambda t: -abs(t[1])):
-        print(f"  {feat:>12}: {coef:+.4f}")
+    # 7. Evaluate
+    metrics, y_prob = evaluate_model(
+        model,
+        X_test,
+        y_test,
+        model_name="logistic_regression_clinical",
+        results_dir=RESULTS_DIR,
+    )
 
-    # 7. Save model
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    model_path = os.path.join(MODEL_DIR, "logistic_regression_model.joblib")
-    joblib.dump(model, model_path)
-    print(f"\nModel saved to {model_path}")
+    # 8. Produce branch outputs for test patients
+    test_reliability = df.loc[
+        X_test.index,
+        "Reliability",
+    ]
 
+    branch_output = X_test.copy()
+
+    branch_output["Actual"] = y_test
+    branch_output["Anemia_Probability"] = y_prob
+    branch_output["Predicted_Class"] = (
+        y_prob >= 0.5
+    ).astype(int)
+
+    branch_output["Reliability"] = (
+        test_reliability
+    )
+
+    output_path = os.path.join(
+        RESULTS_DIR,
+        "logistic_regression_clinical_predictions.csv",
+    )
+
+    branch_output.to_csv(
+        output_path,
+        index=True,
+    )
+
+    print(
+        f"\nSaved branch predictions to: "
+        f"{output_path}"
+    )
+
+    # 9. Save model
+    os.makedirs(
+        MODEL_DIR,
+        exist_ok=True,
+    )
+
+    model_path = os.path.join(
+        MODEL_DIR,
+        "logistic_regression_clinical.joblib",
+    )
+
+    joblib.dump(
+        model,
+        model_path,
+    )
+
+    print(
+        f"Saved model to: {model_path}"
+    )
+
+    # 10. Display sample branch outputs
+    print("\nSample Hb/Clinical branch outputs:")
+
+    print(
+        branch_output[
+            [
+                "Actual",
+                "Anemia_Probability",
+                "Predicted_Class",
+                "Reliability",
+            ]
+        ].head(10)
+    )
 
 if __name__ == "__main__":
     main()
