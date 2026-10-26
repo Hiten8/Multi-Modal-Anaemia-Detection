@@ -1,0 +1,29 @@
+{
+  "fusion": {
+    "script": "src/fusion/fuse.py",
+    "k": 1.0,
+    "x": 0.2
+  },
+  "modalities": {
+    "nail": {
+      "infer_script": "nail_inference/infer.py",
+      "checkpoint": "nail_inference/resnet50_binary_crop_frozen_best.pt",
+      "stats_json": "nail_inference/nail_quality_train_stats.json",
+      "quality": true,
+      "q_method": "mean",
+      "threshold": 0.5,
+      "recursive": false,
+      "batch_size": 16
+    },
+    "palm": {
+      "infer_script": "palm_inference/infer.py",
+      "checkpoint": "palm_inference/palm_inference_non_synthetic/efficientnet_b0_original_best.pth",
+      "stats_json": "palm_inference/palm_inference_non_synthetic/palm_quality_train_stats.json",
+      "quality": true,
+      "q_method": "mean",
+      "threshold": 0.5,
+      "recursive": false,
+      "batch_size": 32
+    }
+  }
+}
