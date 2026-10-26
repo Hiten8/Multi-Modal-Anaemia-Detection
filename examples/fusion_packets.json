@@ -1,0 +1,18 @@
+[
+  {
+    "modality_name": "nail",
+    "available": true,
+    "pred": 1,
+    "p": 0.72,
+    "q": 0.88,
+    "t": 0.5
+  },
+  {
+    "modality_name": "palm",
+    "available": false,
+    "pred": 0,
+    "p": 0.0,
+    "q": 0.0,
+    "t": 0.5
+  }
+]
